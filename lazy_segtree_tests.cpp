@@ -42,6 +42,10 @@ struct Mat2 {
     long long a11;
 };
 
+struct Mat3 {
+    std::array<std::array<long long, 3>, 3> a;
+};
+
 struct SumMax {
     long long sum;
     long long mx;
@@ -81,6 +85,10 @@ static bool operator==(const Mat2& x, const Mat2& y) {
     return x.a00 == y.a00 && x.a01 == y.a01 && x.a10 == y.a10 && x.a11 == y.a11;
 }
 
+static bool operator==(const Mat3& x, const Mat3& y) {
+    return x.a == y.a;
+}
+
 static bool operator==(const SumMax& x, const SumMax& y) {
     return x.sum == y.sum && x.mx == y.mx;
 }
@@ -100,6 +108,18 @@ static Mat2 mat_mul(const Mat2& x, const Mat2& y) {
         x.a10 * y.a00 + x.a11 * y.a10,
         x.a10 * y.a01 + x.a11 * y.a11,
     };
+}
+
+static Mat3 mat3_mul(const Mat3& x, const Mat3& y) {
+    Mat3 out{{{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}}};
+    for (int i = 0; i < 3; ++i) {
+        for (int k = 0; k < 3; ++k) {
+            for (int j = 0; j < 3; ++j) {
+                out.a[i][j] += x.a[i][k] * y.a[k][j];
+            }
+        }
+    }
+    return out;
 }
 
 static PolyNode poly_point(long long x, int i) {
@@ -1148,6 +1168,149 @@ static void test_matrix_product_with_assign_and_affine_lazy() {
     assert(st.prod(2, 3) == fold(2, 3));
 }
 
+static void stress_test_matrix_assign_affine_compositions_against_naive() {
+    using S = Mat2;
+    using F = MatConjAssignTag;
+
+    constexpr long long MOD = 1000000007LL;
+    constexpr int N = 40;
+    constexpr int STEPS = 7000;
+
+    auto norm = [&](long long x) {
+        x %= MOD;
+        if (x < 0) {
+            x += MOD;
+        }
+        return x;
+    };
+    auto mul = [&](const S& a, const S& b) {
+        return S{
+            norm(a.a00 * b.a00 + a.a01 * b.a10),
+            norm(a.a00 * b.a01 + a.a01 * b.a11),
+            norm(a.a10 * b.a00 + a.a11 * b.a10),
+            norm(a.a10 * b.a01 + a.a11 * b.a11),
+        };
+    };
+    auto mpow = [&](S base, int exp) {
+        S out{1, 0, 0, 1};
+        while (exp > 0) {
+            if (exp & 1) {
+                out = mul(out, base);
+            }
+            base = mul(base, base);
+            exp >>= 1;
+        }
+        return out;
+    };
+    auto apply_point = [&](const F& f, const S& x) {
+        S v = f.has_assign ? f.assign : x;
+        v = mul(f.l, v);
+        v = mul(v, f.r);
+        return v;
+    };
+    auto conj_upper = [&](long long t) {
+        const long long tt = norm(t);
+        S l{1, tt, 0, 1};
+        S r{1, norm(-tt), 0, 1};
+        return F{false, S{0, 0, 0, 0}, l, r};
+    };
+    auto id_tag = [&]() {
+        return F{false, S{0, 0, 0, 0}, S{1, 0, 0, 1}, S{1, 0, 0, 1}};
+    };
+
+    std::mt19937 rng(77773331u);
+    std::uniform_int_distribution<int> dist_op(0, 3);
+    std::uniform_int_distribution<int> dist_idx(0, N - 1);
+    std::uniform_int_distribution<int> dist_small(-3, 3);
+    std::uniform_int_distribution<int> dist_t(0, 8);
+    std::bernoulli_distribution coin(0.5);
+
+    std::vector<S> naive(N);
+    for (int i = 0; i < N; ++i) {
+        naive[i] = S{norm(1), norm(dist_small(rng)), norm(dist_small(rng)), norm(1)};
+    }
+
+    LazySegTree<S, F> st(
+        naive,
+        [&](const S& a, const S& b) { return mul(a, b); },
+        []() { return S{1, 0, 0, 1}; },
+        [&](const F& f, const S& p, int len) {
+            if (f.has_assign) {
+                const S k = apply_point(f, S{0, 0, 0, 0});
+                return mpow(k, len);
+            }
+            return mul(mul(f.l, p), f.r);
+        },
+        [&](const F& f, const F& g) {
+            if (f.has_assign) {
+                return f;
+            }
+            if (g.has_assign) {
+                return F{true, g.assign, mul(f.l, g.l), mul(g.r, f.r)};
+            }
+            return F{false, S{0, 0, 0, 0}, mul(f.l, g.l), mul(g.r, f.r)};
+        },
+        id_tag);
+
+    auto fold = [&](int l, int r) {
+        S out{1, 0, 0, 1};
+        for (int i = l; i < r; ++i) {
+            out = mul(out, naive[i]);
+        }
+        return out;
+    };
+
+    for (int step = 0; step < STEPS; ++step) {
+        int l = dist_idx(rng);
+        int r = dist_idx(rng);
+        if (l > r) {
+            std::swap(l, r);
+        }
+        ++r;
+
+        const int op = dist_op(rng);
+        if (op == 0) {
+            F f = id_tag();
+            if (coin(rng)) {
+                f = conj_upper(dist_t(rng));
+            } else {
+                f.has_assign = true;
+                f.assign = S{
+                    norm(dist_small(rng)),
+                    norm(dist_small(rng)),
+                    norm(dist_small(rng)),
+                    norm(dist_small(rng)),
+                };
+                if (coin(rng)) {
+                    const F c = conj_upper(dist_t(rng));
+                    f.l = c.l;
+                    f.r = c.r;
+                }
+            }
+
+            st.apply_range(l, r, f);
+            for (int i = l; i < r; ++i) {
+                naive[i] = apply_point(f, naive[i]);
+            }
+        } else if (op == 1) {
+            assert(st.prod(l, r) == fold(l, r));
+        } else if (op == 2) {
+            const int p = dist_idx(rng);
+            S x{
+                norm(dist_small(rng)),
+                norm(dist_small(rng)),
+                norm(dist_small(rng)),
+                norm(dist_small(rng)),
+            };
+            st.set_point(p, x);
+            naive[p] = x;
+        } else {
+            const int p = dist_idx(rng);
+            assert(st.get_point(p) == naive[p]);
+        }
+    }
+}
+
 static void test_polynomial_index_update_sequence_requested() {
     using S = PolyNode;
     using F = PolyTag;
@@ -1388,6 +1551,24 @@ static void test_monoid_matrix_product_tree() {
         {{1, Mat2{2, 0, 1, 2}}, {3, Mat2{1, 1, 0, 1}}});
 }
 
+static void test_monoid_matrix_product_tree_3x3() {
+    using S = Mat3;
+    const std::vector<S> init = {
+        {{{{1, 2, 0}, {0, 1, 1}, {2, 0, 1}}}},
+        {{{{2, 1, 3}, {1, 0, 2}, {0, 1, 1}}}},
+        {{{{1, 0, 1}, {3, 1, 0}, {2, 2, 1}}}},
+        {{{{0, 1, 2}, {1, 1, 0}, {4, 0, 1}}}},
+    };
+    run_monoid_checks<S>(
+        init,
+        [](const S& a, const S& b) { return mat3_mul(a, b); },
+        []() { return S{{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}}}; },
+        {
+            {1, S{{{{1, 1, 0}, {0, 1, 1}, {2, 0, 1}}}}},
+            {3, S{{{{2, 0, 1}, {1, 3, 0}, {0, 1, 1}}}}},
+        });
+}
+
 static void test_monoid_pair_tree() {
     using S = SumMax;
     run_monoid_checks<S>(
@@ -1423,6 +1604,7 @@ int main() {
     stress_test_affine_minmax_with_negative_a_against_naive();
     stress_test_sum_bitwise_affine_lazy_against_naive();
     stress_test_xor_lazy_against_naive();
+    stress_test_matrix_assign_affine_compositions_against_naive();
     stress_test_polynomial_index_updates_against_naive();
 
     test_monoid_sum_tree();
@@ -1434,6 +1616,7 @@ int main() {
     test_monoid_and_tree();
     test_monoid_lcm_tree();
     test_monoid_matrix_product_tree();
+    test_monoid_matrix_product_tree_3x3();
     test_monoid_pair_tree();
 
     std::cout << "All LazySegTree tests passed.\n";
