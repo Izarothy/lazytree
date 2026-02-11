@@ -171,24 +171,337 @@ static AssignAffineTag assign_affine_from_linear(long long alpha, long long beta
     return AssignAffineTag{false, 0, alpha, beta};
 }
 
-template <class S, class Op, class E>
-static void run_monoid_checks(const std::vector<S>& init, Op op, E e, const std::vector<std::pair<int, S>>& updates) {
-    using F = NoLazyTag;
-    LazySegTree<S, F> st(
-        init,
-        op,
-        e,
-        [](const F&, const S& x, int) { return x; },
-        [](const F&, const F&) { return F{}; },
-        []() { return F{}; });
+static constexpr long long MOD = 1000000007LL;
+
+template <class S>
+static S map_no_lazy(NoLazyTag, S x, int) {
+    return x;
+}
+
+static NoLazyTag compose_no_lazy(NoLazyTag, NoLazyTag) {
+    return NoLazyTag{};
+}
+
+static NoLazyTag id_no_lazy() {
+    return NoLazyTag{};
+}
+
+static long long op_sum_ll(long long a, long long b) {
+    return a + b;
+}
+
+static long long e_sum_ll() {
+    return 0LL;
+}
+
+static long long map_add_ll(long long f, long long x, int len) {
+    return x + f * len;
+}
+
+static long long compose_add_ll(long long f, long long g) {
+    return f + g;
+}
+
+static long long id_add_ll() {
+    return 0LL;
+}
+
+static long long op_max_ll(long long a, long long b) {
+    return std::max(a, b);
+}
+
+static long long e_max_ll() {
+    return std::numeric_limits<long long>::lowest() / 4;
+}
+
+static long long map_assign_tag(AssignTag f, long long x, int) {
+    return f.has ? f.value : x;
+}
+
+static AssignTag compose_assign_tag(AssignTag f, AssignTag g) {
+    return f.has ? f : g;
+}
+
+static AssignTag id_assign_tag() {
+    return AssignTag{false, 0};
+}
+
+static long long map_affine_sum(AffineTag f, long long sum, int len) {
+    return f.a * sum + f.b * len;
+}
+
+static AffineTag compose_affine(AffineTag f, AffineTag g) {
+    return AffineTag{f.a * g.a, f.a * g.b + f.b};
+}
+
+static AffineTag id_affine() {
+    return AffineTag{1, 0};
+}
+
+static long long map_assign_affine_sum(AssignAffineTag f, long long sum, int len) {
+    const auto p = assign_affine_linear(f);
+    return p.first * sum + p.second * len;
+}
+
+static AssignAffineTag compose_assign_affine(AssignAffineTag f, AssignAffineTag g) {
+    const auto nf = assign_affine_linear(f);
+    const auto ng = assign_affine_linear(g);
+    return assign_affine_from_linear(nf.first * ng.first, nf.first * ng.second + nf.second);
+}
+
+static AssignAffineTag id_assign_affine() {
+    return AssignAffineTag{false, 0, 1, 0};
+}
+
+static MinMax op_minmax(MinMax a, MinMax b) {
+    return MinMax{std::min(a.mn, b.mn), std::max(a.mx, b.mx)};
+}
+
+static MinMax e_minmax() {
+    constexpr long long inf = std::numeric_limits<long long>::max() / 4;
+    return MinMax{inf, -inf};
+}
+
+static MinMax map_affine_minmax(AffineTag f, MinMax x, int) {
+    if (f.a >= 0) {
+        return MinMax{f.a * x.mn + f.b, f.a * x.mx + f.b};
+    }
+    return MinMax{f.a * x.mx + f.b, f.a * x.mn + f.b};
+}
+
+static BitCounts op_bitcounts(BitCounts a, BitCounts b) {
+    BitCounts out{};
+    for (int i = 0; i < 32; ++i) {
+        out.cnt[i] = a.cnt[i] + b.cnt[i];
+    }
+    return out;
+}
+
+static BitCounts e_bitcounts() {
+    return BitCounts{};
+}
+
+static BitCounts map_bitwise_affine(BitwiseAffineTag f, BitCounts x, int len) {
+    BitCounts out{};
+    for (int i = 0; i < 32; ++i) {
+        const bool o = ((f.O >> i) & 1u) != 0;
+        const bool a = ((f.A >> i) & 1u) != 0;
+        out.cnt[i] = o ? len : (a ? x.cnt[i] : 0);
+    }
+    return out;
+}
+
+static BitwiseAffineTag compose_bitwise_affine(BitwiseAffineTag f, BitwiseAffineTag g) {
+    return BitwiseAffineTag{f.A & g.A, (g.O & f.A) | f.O};
+}
+
+static BitwiseAffineTag id_bitwise_affine() {
+    return BitwiseAffineTag{~0u, 0u};
+}
+
+static std::uint32_t op_xor_u32(std::uint32_t a, std::uint32_t b) {
+    return a ^ b;
+}
+
+static std::uint32_t e_xor_u32() {
+    return 0u;
+}
+
+static std::uint32_t map_xor_u32(std::uint32_t f, std::uint32_t x, int len) {
+    return (len & 1) ? (x ^ f) : x;
+}
+
+static std::uint32_t compose_xor_u32(std::uint32_t f, std::uint32_t g) {
+    return f ^ g;
+}
+
+static std::uint32_t id_xor_u32() {
+    return 0u;
+}
+
+static long long mod_norm(long long x) {
+    x %= MOD;
+    if (x < 0) {
+        x += MOD;
+    }
+    return x;
+}
+
+static Mat2 mat_mul_mod(Mat2 a, Mat2 b) {
+    return Mat2{
+        mod_norm(a.a00 * b.a00 + a.a01 * b.a10),
+        mod_norm(a.a00 * b.a01 + a.a01 * b.a11),
+        mod_norm(a.a10 * b.a00 + a.a11 * b.a10),
+        mod_norm(a.a10 * b.a01 + a.a11 * b.a11),
+    };
+}
+
+static Mat2 mat_id_mod() {
+    return Mat2{1, 0, 0, 1};
+}
+
+static Mat2 mat_pow_mod(Mat2 base, int exp) {
+    Mat2 out = mat_id_mod();
+    while (exp > 0) {
+        if (exp & 1) {
+            out = mat_mul_mod(out, base);
+        }
+        base = mat_mul_mod(base, base);
+        exp >>= 1;
+    }
+    return out;
+}
+
+static Mat2 mat_apply_point_mod(MatConjAssignTag f, Mat2 x) {
+    Mat2 v = f.has_assign ? f.assign : x;
+    v = mat_mul_mod(f.l, v);
+    v = mat_mul_mod(v, f.r);
+    return v;
+}
+
+static Mat2 op_mat2_mod(Mat2 a, Mat2 b) {
+    return mat_mul_mod(a, b);
+}
+
+static Mat2 e_mat2_mod() {
+    return mat_id_mod();
+}
+
+static Mat2 map_mat_conj_assign_mod(MatConjAssignTag f, Mat2 p, int len) {
+    if (f.has_assign) {
+        const Mat2 k = mat_apply_point_mod(f, Mat2{0, 0, 0, 0});
+        return mat_pow_mod(k, len);
+    }
+    return mat_mul_mod(mat_mul_mod(f.l, p), f.r);
+}
+
+static MatConjAssignTag compose_mat_conj_assign_mod(MatConjAssignTag f, MatConjAssignTag g) {
+    if (f.has_assign) {
+        return f;
+    }
+    if (g.has_assign) {
+        return MatConjAssignTag{true, g.assign, mat_mul_mod(f.l, g.l), mat_mul_mod(g.r, f.r)};
+    }
+    return MatConjAssignTag{false, Mat2{0, 0, 0, 0}, mat_mul_mod(f.l, g.l), mat_mul_mod(g.r, f.r)};
+}
+
+static MatConjAssignTag id_mat_conj_assign_mod() {
+    return MatConjAssignTag{false, Mat2{0, 0, 0, 0}, Mat2{1, 0, 0, 1}, Mat2{1, 0, 0, 1}};
+}
+
+static PolyNode op_poly_node(PolyNode a, PolyNode b) {
+    return PolyNode{a.sum + b.sum, a.cnt + b.cnt, a.si + b.si, a.si2 + b.si2};
+}
+
+static PolyNode e_poly_node() {
+    return PolyNode{0, 0, 0, 0};
+}
+
+static PolyNode map_poly(PolyTag f, PolyNode x, int) {
+    return PolyNode{
+        f.a * x.sum + f.c0 * x.cnt + f.c1 * x.si + f.c2 * x.si2,
+        x.cnt,
+        x.si,
+        x.si2,
+    };
+}
+
+static PolyTag compose_poly(PolyTag f, PolyTag g) {
+    return PolyTag{
+        f.a * g.a,
+        f.a * g.c0 + f.c0,
+        f.a * g.c1 + f.c1,
+        f.a * g.c2 + f.c2,
+    };
+}
+
+static PolyTag id_poly() {
+    return PolyTag{1, 0, 0, 0};
+}
+
+static long long op_min_ll(long long a, long long b) {
+    return std::min(a, b);
+}
+
+static long long e_min_ll() {
+    return std::numeric_limits<long long>::max();
+}
+
+static long long op_gcd_ll(long long a, long long b) {
+    return std::gcd(a, b);
+}
+
+static std::uint32_t op_or_u32(std::uint32_t a, std::uint32_t b) {
+    return a | b;
+}
+
+static std::uint32_t e_or_u32() {
+    return 0u;
+}
+
+static std::uint32_t op_and_u32(std::uint32_t a, std::uint32_t b) {
+    return a & b;
+}
+
+static std::uint32_t e_and_u32() {
+    return ~0u;
+}
+
+static std::uint64_t op_lcm_u64(std::uint64_t a, std::uint64_t b) {
+    return std::lcm(a, b);
+}
+
+static std::uint64_t e_lcm_u64() {
+    return 1ull;
+}
+
+static Mat2 op_mat2_plain(Mat2 a, Mat2 b) {
+    return mat_mul(a, b);
+}
+
+static Mat2 e_mat2_plain() {
+    return Mat2{1, 0, 0, 1};
+}
+
+static Mat3 op_mat3_plain(Mat3 a, Mat3 b) {
+    return mat3_mul(a, b);
+}
+
+static Mat3 e_mat3_plain() {
+    return Mat3{{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}}};
+}
+
+static SumMax op_summax(SumMax a, SumMax b) {
+    return SumMax{a.sum + b.sum, std::max(a.mx, b.mx)};
+}
+
+static SumMax e_summax() {
+    return SumMax{0, std::numeric_limits<long long>::lowest()};
+}
+
+using SumAddTree = LazySegTree<long long, op_sum_ll, e_sum_ll, long long, map_add_ll, compose_add_ll, id_add_ll>;
+using MaxAssignTree = LazySegTree<long long, op_max_ll, e_max_ll, AssignTag, map_assign_tag, compose_assign_tag, id_assign_tag>;
+using SumAffineTree = LazySegTree<long long, op_sum_ll, e_sum_ll, AffineTag, map_affine_sum, compose_affine, id_affine>;
+using SumAssignAffineTree = LazySegTree<long long, op_sum_ll, e_sum_ll, AssignAffineTag, map_assign_affine_sum, compose_assign_affine, id_assign_affine>;
+using SumAssignAffineTreeStatic = LazySegTree<long long, op_sum_ll, e_sum_ll, AssignAffineTag, map_assign_affine_sum, compose_assign_affine, id_assign_affine, 256>;
+using MinMaxAffineTree = LazySegTree<MinMax, op_minmax, e_minmax, AffineTag, map_affine_minmax, compose_affine, id_affine>;
+using BitwiseAffineTree = LazySegTree<BitCounts, op_bitcounts, e_bitcounts, BitwiseAffineTag, map_bitwise_affine, compose_bitwise_affine, id_bitwise_affine>;
+using XorLazyTree = LazySegTree<std::uint32_t, op_xor_u32, e_xor_u32, std::uint32_t, map_xor_u32, compose_xor_u32, id_xor_u32>;
+using MatrixAssignAffineTree = LazySegTree<Mat2, op_mat2_mod, e_mat2_mod, MatConjAssignTag, map_mat_conj_assign_mod, compose_mat_conj_assign_mod, id_mat_conj_assign_mod>;
+using PolyTree = LazySegTree<PolyNode, op_poly_node, e_poly_node, PolyTag, map_poly, compose_poly, id_poly>;
+
+template <class S, S (*OpFn)(S, S), S (*EFn)()>
+static void run_monoid_checks(const std::vector<S>& init, const std::vector<std::pair<int, S>>& updates) {
+    using Tree = LazySegTree<S, OpFn, EFn, NoLazyTag, map_no_lazy<S>, compose_no_lazy, id_no_lazy>;
+    Tree st(init);
 
     std::vector<S> naive = init;
     const int n = static_cast<int>(naive.size());
 
     auto fold = [&](int l, int r) {
-        S acc = e();
+        S acc = EFn();
         for (int i = l; i < r; ++i) {
-            acc = op(acc, naive[i]);
+            acc = OpFn(acc, naive[i]);
         }
         return acc;
     };
@@ -200,7 +513,7 @@ static void run_monoid_checks(const std::vector<S>& init, Op op, E e, const std:
         }
     }
 
-    st.apply_range(0, n, F{});
+    st.apply_range(0, n, NoLazyTag{});
     for (int l = 0; l <= n; ++l) {
         for (int r = l; r <= n; ++r) {
             assert(st.prod(l, r) == fold(l, r));
@@ -225,16 +538,9 @@ static void run_monoid_checks(const std::vector<S>& init, Op op, E e, const std:
 
 static void test_sum_with_add_lazy() {
     using S = long long;
-    using F = long long;
 
     std::vector<S> v = {1, 2, 3, 4, 5, 6, 7, 8};
-    LazySegTree<S, F> st(
-        v,
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
-        [](const F& f, const S& x, int len) { return x + f * len; },
-        [](const F& f, const F& g) { return f + g; },
-        []() { return 0LL; });
+    SumAddTree st(v);
 
     assert(st.all_prod() == 36);
     assert(st.prod(0, 8) == 36);
@@ -253,18 +559,8 @@ static void test_sum_with_add_lazy() {
 
 static void test_max_with_assign_lazy() {
     using S = long long;
-    using F = AssignTag;
-
-    constexpr S NEG_INF = std::numeric_limits<S>::lowest() / 4;
     std::vector<S> v = {5, 1, 9, 2, 7, 3};
-
-    LazySegTree<S, F> st(
-        v,
-        [](const S& a, const S& b) { return std::max(a, b); },
-        [NEG_INF]() { return NEG_INF; },
-        [](const F& f, const S& x, int) { return f.has ? f.value : x; },
-        [](const F& f, const F& g) { return f.has ? f : g; },
-        []() { return AssignTag{false, 0}; });
+    MaxAssignTree st(v);
 
     assert(st.prod(0, 6) == 9);
     st.apply_range(1, 5, AssignTag{true, 4});
@@ -279,7 +575,6 @@ static void test_max_with_assign_lazy() {
 
 static void stress_test_sum_add_lazy_against_naive() {
     using S = long long;
-    using F = long long;
 
     constexpr int N = 128;
     constexpr int STEPS = 6000;
@@ -290,13 +585,7 @@ static void stress_test_sum_add_lazy_against_naive() {
     std::uniform_int_distribution<int> dist_idx(0, N - 1);
 
     std::vector<S> naive(N, 0);
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
-        [](const F& f, const S& x, int len) { return x + f * len; },
-        [](const F& f, const F& g) { return f + g; },
-        []() { return 0LL; });
+    SumAddTree st(naive);
 
     for (int step = 0; step < STEPS; ++step) {
         const int op = dist_op(rng);
@@ -343,13 +632,7 @@ static void test_sum_with_affine_lazy() {
     using F = AffineTag;
 
     std::vector<S> v = {1, 2, 3, 4, 5};
-    LazySegTree<S, F> st(
-        v,
-        [](const S& x, const S& y) { return x + y; },
-        []() { return 0LL; },
-        [](const F& f, const S& sum, int len) { return f.a * sum + f.b * len; },
-        [](const F& f, const F& g) { return F{f.a * g.a, f.a * g.b + f.b}; },
-        []() { return F{1, 0}; });
+    SumAffineTree st(v);
 
     assert(st.prod(0, 5) == 15);
 
@@ -382,13 +665,7 @@ static void stress_test_sum_affine_lazy_against_naive() {
     std::uniform_int_distribution<int> dist_b(-10, 10);
 
     std::vector<S> naive(N, 0);
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& x, const S& y) { return x + y; },
-        []() { return 0LL; },
-        [](const F& f, const S& sum, int len) { return f.a * sum + f.b * len; },
-        [](const F& f, const F& g) { return F{f.a * g.a, f.a * g.b + f.b}; },
-        []() { return F{1, 0}; });
+    SumAffineTree st(naive);
 
     for (int step = 0; step < STEPS; ++step) {
         int l = dist_idx(rng);
@@ -434,20 +711,7 @@ static void test_assign_affine_together_on_sum_lazy() {
     using F = AssignAffineTag;
 
     std::vector<S> naive = {2, -1, 5, 3, 0, 4};
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
-        [](const F& f, const S& sum, int len) {
-            const auto p = assign_affine_linear(f);
-            return p.first * sum + p.second * len;
-        },
-        [](const F& f, const F& g) {
-            const auto nf = assign_affine_linear(f);
-            const auto ng = assign_affine_linear(g);
-            return assign_affine_from_linear(nf.first * ng.first, nf.first * ng.second + nf.second);
-        },
-        []() { return AssignAffineTag{false, 0, 1, 0}; });
+    SumAssignAffineTree st(naive);
 
     auto range_sum = [&](int l, int r) {
         S out = 0;
@@ -477,20 +741,7 @@ static void test_assign_after_affine_on_sum_lazy() {
     using F = AssignAffineTag;
 
     std::vector<S> naive = {1, 2, 3, 4, 5, 6, 7};
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
-        [](const F& f, const S& sum, int len) {
-            const auto p = assign_affine_linear(f);
-            return p.first * sum + p.second * len;
-        },
-        [](const F& f, const F& g) {
-            const auto nf = assign_affine_linear(f);
-            const auto ng = assign_affine_linear(g);
-            return assign_affine_from_linear(nf.first * ng.first, nf.first * ng.second + nf.second);
-        },
-        []() { return AssignAffineTag{false, 0, 1, 0}; });
+    SumAssignAffineTree st(naive);
 
     auto range_sum = [&](int l, int r) {
         S out = 0;
@@ -535,20 +786,7 @@ static void stress_test_assign_affine_compositions_against_naive() {
     std::bernoulli_distribution coin(0.4);
 
     std::vector<S> naive(N, 0);
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
-        [](const F& f, const S& sum, int len) {
-            const auto p = assign_affine_linear(f);
-            return p.first * sum + p.second * len;
-        },
-        [](const F& f, const F& g) {
-            const auto nf = assign_affine_linear(f);
-            const auto ng = assign_affine_linear(g);
-            return assign_affine_from_linear(nf.first * ng.first, nf.first * ng.second + nf.second);
-        },
-        []() { return AssignAffineTag{false, 0, 1, 0}; });
+    SumAssignAffineTree st(naive);
 
     for (int step = 0; step < STEPS; ++step) {
         int l = dist_idx(rng);
@@ -594,20 +832,7 @@ static void test_ten_full_range_apply_then_single_prod_assign_affine() {
     using F = AssignAffineTag;
 
     std::vector<S> naive = {1, 3, 5, 7, 9, 11, 13, 15};
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
-        [](const F& f, const S& sum, int len) {
-            const auto p = assign_affine_linear(f);
-            return p.first * sum + p.second * len;
-        },
-        [](const F& f, const F& g) {
-            const auto nf = assign_affine_linear(f);
-            const auto ng = assign_affine_linear(g);
-            return assign_affine_from_linear(nf.first * ng.first, nf.first * ng.second + nf.second);
-        },
-        []() { return AssignAffineTag{false, 0, 1, 0}; });
+    SumAssignAffineTreeStatic st(naive);
 
     const std::vector<F> ops = {
         {false, 0, 1, 1},
@@ -650,18 +875,7 @@ static void test_affine_negative_a_with_minmax_lazy() {
         init.push_back(minmax_point(x));
     }
 
-    LazySegTree<S, F> st(
-        init,
-        [](const S& a, const S& b) { return S{std::min(a.mn, b.mn), std::max(a.mx, b.mx)}; },
-        [INF]() { return S{INF, -INF}; },
-        [](const F& f, const S& x, int) {
-            if (f.a >= 0) {
-                return S{f.a * x.mn + f.b, f.a * x.mx + f.b};
-            }
-            return S{f.a * x.mx + f.b, f.a * x.mn + f.b};
-        },
-        [](const F& f, const F& g) { return F{f.a * g.a, f.a * g.b + f.b}; },
-        []() { return F{1, 0}; });
+    MinMaxAffineTree st(init);
 
     auto fold = [&](int l, int r) {
         long long mn = INF;
@@ -704,18 +918,7 @@ static void stress_test_affine_minmax_with_negative_a_against_naive() {
 
     std::vector<long long> naive(N, 0);
     std::vector<S> init(N, minmax_point(0));
-    LazySegTree<S, F> st(
-        init,
-        [](const S& a, const S& b) { return S{std::min(a.mn, b.mn), std::max(a.mx, b.mx)}; },
-        [INF]() { return S{INF, -INF}; },
-        [](const F& f, const S& x, int) {
-            if (f.a >= 0) {
-                return S{f.a * x.mn + f.b, f.a * x.mx + f.b};
-            }
-            return S{f.a * x.mx + f.b, f.a * x.mn + f.b};
-        },
-        [](const F& f, const F& g) { return F{f.a * g.a, f.a * g.b + f.b}; },
-        []() { return F{1, 0}; });
+    MinMaxAffineTree st(init);
 
     auto fold = [&](int l, int r) {
         long long mn = INF;
@@ -774,31 +977,7 @@ static void test_sum_with_bitwise_affine_lazy() {
         init.push_back(bits_from_value(x));
     }
 
-    LazySegTree<S, F> st(
-        init,
-        [](const S& a, const S& b) {
-            S out{};
-            for (int i = 0; i < 32; ++i) {
-                out.cnt[i] = a.cnt[i] + b.cnt[i];
-            }
-            return out;
-        },
-        []() {
-            return S{};
-        },
-        [](const F& f, const S& x, int len) {
-            S out{};
-            for (int i = 0; i < 32; ++i) {
-                const bool o = ((f.O >> i) & 1u) != 0;
-                const bool a = ((f.A >> i) & 1u) != 0;
-                out.cnt[i] = o ? len : (a ? x.cnt[i] : 0);
-            }
-            return out;
-        },
-        [](const F& f, const F& g) {
-            return F{f.A & g.A, (g.O & f.A) | f.O};
-        },
-        []() { return F{~0u, 0u}; });
+    BitwiseAffineTree st(init);
 
     std::vector<std::uint32_t> naive = base;
     auto range_sum = [&](int l, int r) {
@@ -854,31 +1033,7 @@ static void stress_test_sum_bitwise_affine_lazy_against_naive() {
         init.push_back(bits_from_value(x));
     }
 
-    LazySegTree<S, F> st(
-        init,
-        [](const S& a, const S& b) {
-            S out{};
-            for (int i = 0; i < 32; ++i) {
-                out.cnt[i] = a.cnt[i] + b.cnt[i];
-            }
-            return out;
-        },
-        []() {
-            return S{};
-        },
-        [](const F& f, const S& x, int len) {
-            S out{};
-            for (int i = 0; i < 32; ++i) {
-                const bool o = ((f.O >> i) & 1u) != 0;
-                const bool a = ((f.A >> i) & 1u) != 0;
-                out.cnt[i] = o ? len : (a ? x.cnt[i] : 0);
-            }
-            return out;
-        },
-        [](const F& f, const F& g) {
-            return F{f.A & g.A, (g.O & f.A) | f.O};
-        },
-        []() { return F{~0u, 0u}; });
+    BitwiseAffineTree st(init);
 
     auto expected_bits = [&](int l, int r) {
         S out{};
@@ -923,16 +1078,9 @@ static void stress_test_sum_bitwise_affine_lazy_against_naive() {
 
 static void test_xor_lazy_requested_patterns() {
     using S = std::uint32_t;
-    using F = std::uint32_t;
 
     std::vector<S> naive = {3, 7, 1, 4, 2, 8, 5, 9, 6, 10, 12, 14};
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a ^ b; },
-        []() { return 0u; },
-        [](const F& f, const S& x, int len) { return (len & 1) ? (x ^ f) : x; },
-        [](const F& f, const F& g) { return f ^ g; },
-        []() { return 0u; });
+    XorLazyTree st(naive);
 
     auto fold = [&](int l, int r) {
         S out = 0;
@@ -984,7 +1132,6 @@ static void test_xor_lazy_requested_patterns() {
 
 static void stress_test_xor_lazy_against_naive() {
     using S = std::uint32_t;
-    using F = std::uint32_t;
 
     constexpr int N = 128;
     constexpr int STEPS = 8000;
@@ -999,13 +1146,7 @@ static void stress_test_xor_lazy_against_naive() {
     for (int i = 0; i < N; ++i) {
         naive[i] = dist_val(rng);
     }
-    LazySegTree<S, F> st(
-        naive,
-        [](const S& a, const S& b) { return a ^ b; },
-        []() { return 0u; },
-        [](const F& f, const S& x, int len) { return (len & 1) ? (x ^ f) : x; },
-        [](const F& f, const F& g) { return f ^ g; },
-        []() { return 0u; });
+    XorLazyTree st(naive);
 
     auto fold = [&](int l, int r) {
         S out = 0;
@@ -1064,17 +1205,6 @@ static void test_matrix_product_with_assign_and_affine_lazy() {
             norm(a.a10 * b.a01 + a.a11 * b.a11),
         };
     };
-    auto mpow = [&](S base, int exp) {
-        S out{1, 0, 0, 1};
-        while (exp > 0) {
-            if (exp & 1) {
-                out = mul(out, base);
-            }
-            base = mul(base, base);
-            exp >>= 1;
-        }
-        return out;
-    };
     auto apply_point = [&](const F& f, const S& x) {
         S v = f.has_assign ? f.assign : x;
         v = mul(f.l, v);
@@ -1094,27 +1224,7 @@ static void test_matrix_product_with_assign_and_affine_lazy() {
         x = S{norm(x.a00), norm(x.a01), norm(x.a10), norm(x.a11)};
     }
 
-    LazySegTree<S, F> st(
-        naive,
-        [&](const S& a, const S& b) { return mul(a, b); },
-        []() { return S{1, 0, 0, 1}; },
-        [&](const F& f, const S& p, int len) {
-            if (f.has_assign) {
-                const S k = apply_point(f, S{0, 0, 0, 0});
-                return mpow(k, len);
-            }
-            return mul(mul(f.l, p), f.r);
-        },
-        [&](const F& f, const F& g) {
-            if (f.has_assign) {
-                return f;
-            }
-            if (g.has_assign) {
-                return F{true, g.assign, mul(f.l, g.l), mul(g.r, f.r)};
-            }
-            return F{false, S{0, 0, 0, 0}, mul(f.l, g.l), mul(g.r, f.r)};
-        },
-        []() { return F{false, S{0, 0, 0, 0}, S{1, 0, 0, 1}, S{1, 0, 0, 1}}; });
+    MatrixAssignAffineTree st(naive);
 
     auto upper_conj = [&](long long t) {
         S l{1, norm(t), 0, 1};
@@ -1191,17 +1301,6 @@ static void stress_test_matrix_assign_affine_compositions_against_naive() {
             norm(a.a10 * b.a01 + a.a11 * b.a11),
         };
     };
-    auto mpow = [&](S base, int exp) {
-        S out{1, 0, 0, 1};
-        while (exp > 0) {
-            if (exp & 1) {
-                out = mul(out, base);
-            }
-            base = mul(base, base);
-            exp >>= 1;
-        }
-        return out;
-    };
     auto apply_point = [&](const F& f, const S& x) {
         S v = f.has_assign ? f.assign : x;
         v = mul(f.l, v);
@@ -1230,27 +1329,7 @@ static void stress_test_matrix_assign_affine_compositions_against_naive() {
         naive[i] = S{norm(1), norm(dist_small(rng)), norm(dist_small(rng)), norm(1)};
     }
 
-    LazySegTree<S, F> st(
-        naive,
-        [&](const S& a, const S& b) { return mul(a, b); },
-        []() { return S{1, 0, 0, 1}; },
-        [&](const F& f, const S& p, int len) {
-            if (f.has_assign) {
-                const S k = apply_point(f, S{0, 0, 0, 0});
-                return mpow(k, len);
-            }
-            return mul(mul(f.l, p), f.r);
-        },
-        [&](const F& f, const F& g) {
-            if (f.has_assign) {
-                return f;
-            }
-            if (g.has_assign) {
-                return F{true, g.assign, mul(f.l, g.l), mul(g.r, f.r)};
-            }
-            return F{false, S{0, 0, 0, 0}, mul(f.l, g.l), mul(g.r, f.r)};
-        },
-        id_tag);
+    MatrixAssignAffineTree st(naive);
 
     auto fold = [&](int l, int r) {
         S out{1, 0, 0, 1};
@@ -1323,27 +1402,7 @@ static void test_polynomial_index_update_sequence_requested() {
         init.push_back(poly_point(naive[i], i));
     }
 
-    LazySegTree<S, F> st(
-        init,
-        [](const S& a, const S& b) { return S{a.sum + b.sum, a.cnt + b.cnt, a.si + b.si, a.si2 + b.si2}; },
-        []() { return S{0, 0, 0, 0}; },
-        [](const F& f, const S& x, int) {
-            return S{
-                f.a * x.sum + f.c0 * x.cnt + f.c1 * x.si + f.c2 * x.si2,
-                x.cnt,
-                x.si,
-                x.si2,
-            };
-        },
-        [](const F& f, const F& g) {
-            return F{
-                f.a * g.a,
-                f.a * g.c0 + f.c0,
-                f.a * g.c1 + f.c1,
-                f.a * g.c2 + f.c2,
-            };
-        },
-        []() { return F{1, 0, 0, 0}; });
+    PolyTree st(init);
 
     auto apply_naive = [&](int l, int r, const F& f) {
         for (int i = l; i < r; ++i) {
@@ -1405,27 +1464,7 @@ static void stress_test_polynomial_index_updates_against_naive() {
         init.push_back(poly_point(0, i));
     }
 
-    LazySegTree<S, F> st(
-        init,
-        [](const S& a, const S& b) { return S{a.sum + b.sum, a.cnt + b.cnt, a.si + b.si, a.si2 + b.si2}; },
-        []() { return S{0, 0, 0, 0}; },
-        [](const F& f, const S& x, int) {
-            return S{
-                f.a * x.sum + f.c0 * x.cnt + f.c1 * x.si + f.c2 * x.si2,
-                x.cnt,
-                x.si,
-                x.si2,
-            };
-        },
-        [](const F& f, const F& g) {
-            return F{
-                f.a * g.a,
-                f.a * g.c0 + f.c0,
-                f.a * g.c1 + f.c1,
-                f.a * g.c2 + f.c2,
-            };
-        },
-        []() { return F{1, 0, 0, 0}; });
+    PolyTree st(init);
 
     auto sum_naive = [&](int l, int r) {
         long long out = 0;
@@ -1465,74 +1504,50 @@ static void stress_test_polynomial_index_updates_against_naive() {
 }
 
 static void test_monoid_sum_tree() {
-    using S = long long;
-    run_monoid_checks<S>(
+    run_monoid_checks<long long, op_sum_ll, e_sum_ll>(
         {3, -1, 4, 1, 5, -9, 2, 6},
-        [](const S& a, const S& b) { return a + b; },
-        []() { return 0LL; },
         {{0, 10}, {5, 7}, {7, -3}});
 }
 
 static void test_monoid_min_tree() {
-    using S = long long;
-    run_monoid_checks<S>(
+    run_monoid_checks<long long, op_min_ll, e_min_ll>(
         {7, 2, 9, 4, 8, 1, 6},
-        [](const S& a, const S& b) { return std::min(a, b); },
-        []() { return std::numeric_limits<S>::max(); },
         {{3, -5}, {1, 11}, {5, 0}});
 }
 
 static void test_monoid_max_tree() {
-    using S = long long;
-    run_monoid_checks<S>(
+    run_monoid_checks<long long, op_max_ll, e_max_ll>(
         {7, 2, 9, 4, 8, 1, 6},
-        [](const S& a, const S& b) { return std::max(a, b); },
-        []() { return std::numeric_limits<S>::lowest(); },
         {{3, -5}, {1, 11}, {5, 0}});
 }
 
 static void test_monoid_gcd_tree() {
-    using S = long long;
-    run_monoid_checks<S>(
+    run_monoid_checks<long long, op_gcd_ll, e_sum_ll>(
         {12, 18, 30, 42, 54, 66},
-        [](const S& a, const S& b) { return std::gcd(a, b); },
-        []() { return 0LL; },
         {{0, 24}, {2, 45}, {5, 81}});
 }
 
 static void test_monoid_xor_tree() {
-    using S = std::uint32_t;
-    run_monoid_checks<S>(
+    run_monoid_checks<std::uint32_t, op_xor_u32, e_xor_u32>(
         {0x1u, 0x3u, 0x7u, 0xFu, 0x10u, 0x55u},
-        [](const S& a, const S& b) { return a ^ b; },
-        []() { return 0u; },
         {{1, 0xABu}, {3, 0x33u}, {4, 0x0u}});
 }
 
 static void test_monoid_or_tree() {
-    using S = std::uint32_t;
-    run_monoid_checks<S>(
+    run_monoid_checks<std::uint32_t, op_or_u32, e_or_u32>(
         {0x1u, 0x2u, 0x4u, 0x8u, 0x10u},
-        [](const S& a, const S& b) { return a | b; },
-        []() { return 0u; },
         {{0, 0x40u}, {2, 0x80u}, {4, 0x0u}});
 }
 
 static void test_monoid_and_tree() {
-    using S = std::uint32_t;
-    run_monoid_checks<S>(
+    run_monoid_checks<std::uint32_t, op_and_u32, e_and_u32>(
         {0xFFu, 0xF0u, 0xCCu, 0xAAu, 0x0Fu},
-        [](const S& a, const S& b) { return a & b; },
-        []() { return ~0u; },
         {{0, 0x3Fu}, {1, 0x55u}, {4, 0xF3u}});
 }
 
 static void test_monoid_lcm_tree() {
-    using S = std::uint64_t;
-    run_monoid_checks<S>(
+    run_monoid_checks<std::uint64_t, op_lcm_u64, e_lcm_u64>(
         {2ull, 3ull, 4ull, 5ull, 6ull},
-        [](const S& a, const S& b) { return std::lcm(a, b); },
-        []() { return 1ull; },
         {{0, 7ull}, {2, 9ull}, {4, 10ull}});
 }
 
@@ -1544,10 +1559,8 @@ static void test_monoid_matrix_product_tree() {
         {2, 1, 0, 1},
         {1, 0, 2, 1},
     };
-    run_monoid_checks<S>(
+    run_monoid_checks<S, op_mat2_plain, e_mat2_plain>(
         init,
-        [](const S& a, const S& b) { return mat_mul(a, b); },
-        []() { return Mat2{1, 0, 0, 1}; },
         {{1, Mat2{2, 0, 1, 2}}, {3, Mat2{1, 1, 0, 1}}});
 }
 
@@ -1559,10 +1572,8 @@ static void test_monoid_matrix_product_tree_3x3() {
         {{{{1, 0, 1}, {3, 1, 0}, {2, 2, 1}}}},
         {{{{0, 1, 2}, {1, 1, 0}, {4, 0, 1}}}},
     };
-    run_monoid_checks<S>(
+    run_monoid_checks<S, op_mat3_plain, e_mat3_plain>(
         init,
-        [](const S& a, const S& b) { return mat3_mul(a, b); },
-        []() { return S{{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}}}; },
         {
             {1, S{{{{1, 1, 0}, {0, 1, 1}, {2, 0, 1}}}}},
             {3, S{{{{2, 0, 1}, {1, 3, 0}, {0, 1, 1}}}}},
@@ -1570,8 +1581,7 @@ static void test_monoid_matrix_product_tree_3x3() {
 }
 
 static void test_monoid_pair_tree() {
-    using S = SumMax;
-    run_monoid_checks<S>(
+    run_monoid_checks<SumMax, op_summax, e_summax>(
         {
             {3, 3},
             {1, 1},
@@ -1580,9 +1590,7 @@ static void test_monoid_pair_tree() {
             {5, 5},
             {9, 9},
         },
-        [](const S& a, const S& b) { return S{a.sum + b.sum, std::max(a.mx, b.mx)}; },
-        []() { return S{0, std::numeric_limits<long long>::lowest()}; },
-        {{1, S{10, 10}}, {4, S{-2, -2}}, {5, S{7, 7}}});
+        {{1, SumMax{10, 10}}, {4, SumMax{-2, -2}}, {5, SumMax{7, 7}}});
 }
 
 int main() {

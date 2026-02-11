@@ -1,68 +1,115 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cassert>
-#include <functional>
-#include <utility>
+#include <type_traits>
 #include <vector>
 
-template <class S, class F>
-class LazySegTree {
-public:
-    using Op = std::function<S(const S&, const S&)>;
-    using E = std::function<S()>;
-    using Apply = std::function<S(const F&, const S&, int)>;
-    using Compose = std::function<F(const F&, const F&)>;
-    using Id = std::function<F()>;
+namespace lazy_segtree_detail {
 
+constexpr int ceil_pow2(int n) {
+    int out = 1;
+    while (out < n) {
+        out <<= 1;
+    }
+    return out;
+}
+
+template <class T, int Capacity, bool Dynamic>
+class Storage;
+
+template <class T, int Capacity>
+class Storage<T, Capacity, true> {
+public:
+    void resize(int n, const T& value) {
+        data_.assign(n, value);
+    }
+
+    T& operator[](int i) {
+        return data_[i];
+    }
+
+    const T& operator[](int i) const {
+        return data_[i];
+    }
+
+private:
+    std::vector<T> data_;
+};
+
+template <class T, int Capacity>
+class Storage<T, Capacity, false> {
+public:
+    void resize(int n, const T& value) {
+        assert(0 <= n && n <= Capacity);
+        used_ = n;
+        std::fill(data_.begin(), data_.begin() + used_, value);
+    }
+
+    T& operator[](int i) {
+        assert(0 <= i && i < used_);
+        return data_[i];
+    }
+
+    const T& operator[](int i) const {
+        assert(0 <= i && i < used_);
+        return data_[i];
+    }
+
+private:
+    std::array<T, Capacity> data_{};
+    int used_ = 0;
+};
+
+} // namespace lazy_segtree_detail
+
+template <
+    class S,
+    S (*op)(S, S),
+    S (*e)(),
+    class F,
+    S (*mapping)(F, S, int),
+    F (*composition)(F, F),
+    F (*id)(),
+    int MAX_N = 0>
+class LazySegTree {
+    static_assert(MAX_N >= 0, "MAX_N must be >= 0");
+
+    static constexpr bool kDynamic = (MAX_N == 0);
+    static constexpr int kLeafCap = kDynamic ? 1 : lazy_segtree_detail::ceil_pow2(MAX_N);
+    static constexpr int kNodeCap = kDynamic ? 1 : (2 * kLeafCap);
+
+    using NodeStorage = std::conditional_t<
+        kDynamic,
+        lazy_segtree_detail::Storage<S, kNodeCap, true>,
+        lazy_segtree_detail::Storage<S, kNodeCap, false>>;
+    using LazyStorage = std::conditional_t<
+        kDynamic,
+        lazy_segtree_detail::Storage<F, kLeafCap, true>,
+        lazy_segtree_detail::Storage<F, kLeafCap, false>>;
+
+public:
     int n;
     int size;
     int log;
 
-    Op op;
-    E e;
-    Apply apply;
-    Compose compose;
-    Id id;
-
-    std::vector<S> d;
-    std::vector<F> lz;
-
     LazySegTree()
-        : n(0), size(1), log(0), d(), lz() {}
-
-    LazySegTree(int n_, Op op_, E e_, Apply apply_, Compose compose_, Id id_)
-        : n(n_), size(1), log(0), op(std::move(op_)), e(std::move(e_)),
-          apply(std::move(apply_)), compose(std::move(compose_)), id(std::move(id_)) {
-        assert(n >= 0);
-        while (size < n) {
-            size <<= 1;
-            ++log;
-        }
-        d.assign(2 * size, e());
-        lz.assign(size, id());
-        for (int k = size - 1; k >= 1; --k) {
-            pull(k);
-        }
+        : n(0), size(1), log(0) {
+        init_storage();
     }
 
-    LazySegTree(const std::vector<S>& v, Op op_, E e_, Apply apply_, Compose compose_, Id id_)
-        : n(static_cast<int>(v.size())), size(1), log(0), op(std::move(op_)), e(std::move(e_)),
-          apply(std::move(apply_)), compose(std::move(compose_)), id(std::move(id_)) {
-        while (size < n) {
-            size <<= 1;
-            ++log;
-        }
-        d.assign(2 * size, e());
-        lz.assign(size, id());
-        for (int i = 0; i < n; ++i) {
-            d[size + i] = v[i];
-        }
-        for (int k = size - 1; k >= 1; --k) {
-            pull(k);
-        }
+    explicit LazySegTree(int n_)
+        : n(0), size(1), log(0) {
+        build_empty(n_);
     }
 
-    void set_point(int p, const S& x) {
+    explicit LazySegTree(const std::vector<S>& v)
+        : n(0), size(1), log(0) {
+        build_from_vector(v);
+    }
+
+    void set_point(int p, S x) {
         assert(0 <= p && p < n);
         p += size;
         for (int i = log; i >= 1; --i) {
@@ -83,7 +130,7 @@ public:
         return d[p];
     }
 
-    void apply_range(int l, int r, const F& f) {
+    void apply_range(int l, int r, F f) {
         assert(0 <= l && l <= r && r <= n);
         if (l == r) {
             return;
@@ -101,8 +148,8 @@ public:
             }
         }
 
-        int l0 = l;
-        int r0 = r;
+        const int l0 = l;
+        const int r0 = r;
         int len = 1;
         while (l < r) {
             if (l & 1) {
@@ -164,6 +211,47 @@ public:
     }
 
 private:
+    NodeStorage d;
+    LazyStorage lz;
+
+    void check_static_bound(int n_) const {
+        if constexpr (!kDynamic) {
+            assert(n_ <= MAX_N);
+        }
+    }
+
+    void init_storage() {
+        d.resize(2, e());
+        lz.resize(1, id());
+    }
+
+    void build_empty(int n_) {
+        assert(n_ >= 0);
+        check_static_bound(n_);
+        n = n_;
+        size = 1;
+        log = 0;
+        while (size < n) {
+            size <<= 1;
+            ++log;
+        }
+        d.resize(2 * size, e());
+        lz.resize(size, id());
+        for (int k = size - 1; k >= 1; --k) {
+            pull(k);
+        }
+    }
+
+    void build_from_vector(const std::vector<S>& v) {
+        build_empty(static_cast<int>(v.size()));
+        for (int i = 0; i < n; ++i) {
+            d[size + i] = v[i];
+        }
+        for (int k = size - 1; k >= 1; --k) {
+            pull(k);
+        }
+    }
+
     void pull(int k) {
         d[k] = op(d[2 * k], d[2 * k + 1]);
     }
@@ -179,10 +267,10 @@ private:
         lz[k] = id();
     }
 
-    void all_apply(int k, const F& f, int len) {
-        d[k] = apply(f, d[k], len);
+    void all_apply(int k, F f, int len) {
+        d[k] = mapping(f, d[k], len);
         if (k < size) {
-            lz[k] = compose(f, lz[k]);
+            lz[k] = composition(f, lz[k]);
         }
     }
 
